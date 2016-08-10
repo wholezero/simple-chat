@@ -1,3 +1,5 @@
+load("//third_party/capnproto:capnproto.bzl", "cc_capnp_library")
+
 package(default_visibility = ["//visibility:public"])
 licenses(["notice"])
 
@@ -61,4 +63,24 @@ cc_binary(
     name = "capnpc-capnp",
     srcs = ["c++/src/capnp/compiler/capnpc-capnp.c++"],
     deps = [":capnp-lib"],
+)
+
+filegroup(
+    name = "capnp-capnp",
+    srcs = glob([
+        "c++/src/capnp/**/*.capnp",
+    ]),
+)
+
+cc_capnp_library(
+    name = "test",
+    data = glob(["c++/src/capnp/testdata/**"]),
+    srcs = ["c++/src/capnp/test.capnp"],
+)
+
+cc_capnp_library(
+    name = "test-import",
+    srcs = ["c++/src/capnp/test-import.capnp"],
+    deps = [":test"],
+    include = "c++/src/capnp",
 )
