@@ -1,8 +1,8 @@
 def _impl(ctx):
   print("Rule name = %s, package = %s" % (ctx.label.name, ctx.label.package))
 
-  includes = set(ctx.attr.includes)
-  inputs = set(ctx.files.srcs + ctx.files.data + ctx.files.capnp_capnp + ctx.files.capnpc_cxx)
+  includes = set(ctx.attr.includes + [ctx.attr.capnp_system_include])
+  inputs = set(ctx.files.srcs + ctx.files.data)
   for dep_target in ctx.attr.deps:
     includes += dep_target.capnp.includes
     inputs += dep_target.capnp.inputs
@@ -12,7 +12,7 @@ def _impl(ctx):
   include_flags = ["-I" + inc for inc in includes]
 
   ctx.action(
-      inputs=list(inputs),
+      inputs=list(inputs) + ctx.files.capnpc_cxx + ctx.files.capnp_capnp,
       outputs=ctx.outputs.outs,
       executable=ctx.executable.capnp,
       arguments = args + include_flags + [s.path for s in ctx.files.srcs],
@@ -38,6 +38,7 @@ _capnp_gen = rule(
                                  mandatory=True,
                                  default=Label("//third_party/capnproto:capnpc-c++")),
         "capnp_capnp": attr.label(default=Label("//third_party/capnproto:capnp-capnp")),
+        "capnp_system_include": attr.string(default="third_party/capnproto/c++/src"),
         "outs": attr.output_list(),
     },
     output_to_genfiles=True,
