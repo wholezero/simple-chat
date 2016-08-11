@@ -1,14 +1,12 @@
 def _impl(ctx):
-  print("Rule name = %s, package = %s" % (ctx.label.name, ctx.label.package))
-
   includes = set(ctx.attr.includes + [ctx.attr.capnp_system_include])
   inputs = set(ctx.files.srcs + ctx.files.data)
   for dep_target in ctx.attr.deps:
     includes += dep_target.capnp.includes
     inputs += dep_target.capnp.inputs
 
-  out_path = ctx.var["GENDIR"]
-  args = ["compile", "--verbose", "--no-standard-import", "-o" + ctx.executable.capnpc_cxx.path + ":" + out_path]
+  cc_out = "-o%s:%s" % (ctx.executable.capnpc_cxx.path, ctx.var["GENDIR"])
+  args = ["compile", "--verbose", "--no-standard-import", cc_out]
   include_flags = ["-I" + inc for inc in includes]
 
   ctx.action(

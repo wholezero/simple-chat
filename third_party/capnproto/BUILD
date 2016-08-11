@@ -17,6 +17,9 @@ cc_library(
     copts = [
         "-Wno-sign-compare",
     ],
+    linkopts = [
+        "-pthread",
+    ],
 )
 
 cc_library(
