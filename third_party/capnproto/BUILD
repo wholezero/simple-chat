@@ -16,6 +16,7 @@ cc_library(
     includes = ["c++/src"],
     copts = [
         "-Wno-sign-compare",
+        "-Wno-strict-aliasing",
     ],
     linkopts = [
         "-pthread",
