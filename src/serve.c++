@@ -78,6 +78,7 @@ kj::String readFile(kj::StringPtr filename) {
     if (r < sizeof(buf))
       break;
   }
+  ret.add('\0');
   return kj::String(ret.releaseAsArray());
 }
 
@@ -167,8 +168,13 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
  public:
   WebSessionImpl(sandstorm::UserInfo::Reader userInfo,
                  sandstorm::SessionContext::Client context,
-                 sandstorm::WebSession::Params::Reader params):
-      preferredHandle(userInfo.getPreferredHandle()) {
+                 sandstorm::WebSession::Params::Reader params) {
+    if (userInfo.hasPreferredHandle()) {
+      preferredHandle = kj::heapString(userInfo.getPreferredHandle());
+    } else {
+      preferredHandle = kj::heapString("anon");
+    }
+    KJ_LOG(INFO, "new session", preferredHandle);
     writeUser(userInfo);
   }
 
@@ -184,6 +190,11 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
       auto response = context.getResults().initContent();
       response.setMimeType("text/plain");
       response.getBody().setBytes(readFile("var/chats").asBytes());
+      // TODO(soon): user profiles
+    } else if (path == "topic") {
+      auto response = context.getResults().initContent();
+      response.setMimeType("text/plain");
+      response.getBody().setBytes(readFile("var/topic").asBytes());
     } else {
       auto response = context.getResults().initClientError();
       response.setStatusCode(sandstorm::WebSession::Response::ClientErrorCode::BAD_REQUEST);
@@ -217,6 +228,24 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
     return kj::READY_NOW;
   }
 
+  kj::Promise<void> put(PutContext context) override {
+    auto path = context.getParams().getPath();
+    requireCanonicalPath(path);
+    KJ_LOG(INFO, "Got put: ", path, ".");
+    if (path == "topic") {
+      writeFileAtomic("var/topic", kj::str(context.getParams().getContent().getContent().asChars()));
+      auto response = context.getResults().initRedirect();
+      response.setIsPermanent(false);
+      response.setSwitchToGet(true);
+      response.setLocation("/");
+    } else {
+      auto response = context.getResults().initClientError();
+      response.setStatusCode(sandstorm::WebSession::Response::ClientErrorCode::BAD_REQUEST);
+      response.setDescriptionHtml(kj::str("Don't know how to put ", path));
+    }
+    return kj::READY_NOW;
+  }
+
  private:
   void requireCanonicalPath(kj::StringPtr path) {
     KJ_REQUIRE(!path.startsWith("/"));
@@ -227,7 +256,7 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
     }
   }
 
-  kj::StringPtr preferredHandle;
+  kj::String preferredHandle;
 };
 
 class UiViewImpl final: public sandstorm::UiView::Server {

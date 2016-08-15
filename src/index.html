@@ -1,4 +1,5 @@
 <!doctype html>
+<div id="topic" style="font-style: italic"></div>
 <div id="chats"></div>
 <script type="text/javascript">
 function fetch(url, options) {
@@ -35,6 +36,10 @@ function doPost(url, data) {
   return fetch(url, { method: 'post', data: data });
 }
 
+function doPut(url, data) {
+  return fetch(url, { method: 'put', data: data });
+}
+
 function queryChats() {
   doGet('/chats').then(function(xhr) {
     document.querySelector('#chats').innerText = xhr.responseText;
@@ -45,6 +50,16 @@ function queryChats() {
   });
 }
 
+function queryTopic()  {
+  doGet('/topic').then(function(xhr) {
+    document.querySelector('#topic').innerText = xhr.responseText;
+    window.setTimeout(queryTopic, 1000);
+  }, function(err) {
+    console.error(err.stack);
+    window.setTimeout(queryTopic, 10000);
+  });
+}
+
 function sendChat() {
   doPost('/chats', document.querySelector('#chat').value)
       .catch(function (err) {
@@ -52,9 +67,22 @@ function sendChat() {
   });
   document.querySelector('#chat').value = '';
 }
+
+function setTopic() {
+  doPut('/topic', document.querySelector('#topic-new').value)
+      .catch(function(err) {
+    console.error(err.stack);
+  });
+  document.querySelector('#topic-new').value = '';
+}
 queryChats();
+queryTopic();
 </script>
 <form action="#" onsubmit="sendChat(); return false">
-<input type="text" name="chat" id="chat">
-<button>$</button>
+<input type="text" name="chat" id="chat" autofocus>
+<button>Chat</button>
+</form>
+<form action="#" onsubmit="setTopic(); return false">
+<input type="text" name="topic-new" id="topic-new">
+<button>Topic</button>
 </form>
