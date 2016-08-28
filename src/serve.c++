@@ -141,11 +141,8 @@ void appendDataAtomic(kj::StringPtr filename, kj::StringPtr content) {
   // XX Ubuntu 16.04.1 doesn't seem to have a definition for renameat2.
   KJ_SYSCALL(syscall(SYS_renameat2, AT_FDCWD, filename.cStr(), AT_FDCWD,
                      scratchname.cStr(), RENAME_EXCHANGE));
-  {
-    kj::FdOutputStream(raiiOpen(scratchname, O_WRONLY | O_APPEND))
-        .write(reinterpret_cast<const byte*>(content.begin()), content.size());
-  }
-  syncPath(scratchname);
+  kj::FdOutputStream(raiiOpen(scratchname, O_WRONLY | O_APPEND))
+      .write(reinterpret_cast<const byte*>(content.begin()), content.size());
 }
 
 kj::String identityStr(capnp::Data::Reader identity) {
@@ -175,9 +172,11 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
       preferredHandle = kj::heapString("anon");
     }
     KJ_LOG(INFO, "new session", preferredHandle);
-    writeUser(userInfo);
+    //writeUser(userInfo);
   }
 
+  // TODO(soon): GET /chats?new -> enqueue request onto wait queue, dispatch
+  // that queue after anyone posts a chat.
   kj::Promise<void> get(GetContext context) override {
     auto path = context.getParams().getPath();
     requireCanonicalPath(path);
@@ -256,6 +255,7 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
     }
   }
 
+  // TODO(soon): strip spaces and newlines from handle
   kj::String preferredHandle;
 };
 
