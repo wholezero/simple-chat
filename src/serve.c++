@@ -34,33 +34,10 @@ typedef unsigned char byte;
 
 namespace {
 
-template <typename T>
-class NullHandler final: public capnp::JsonCodec::Handler<T> {
- public:
-  void encode(const capnp::JsonCodec& codec, capnp::ReaderFor<T> input,
-              capnp::JsonValue::Builder output) const override {
-  }
-
-  typename T::Client decode(const capnp::JsonCodec& codec,
-                            capnp::JsonValue::Reader input) const override {
-    KJ_UNIMPLEMENTED("NullHandler::decode");
-  }
-};
-
-NullHandler<sandstorm::Identity> identity_handler;
-capnp::JsonCodec json;
-
 kj::AutoCloseFd raiiOpen(kj::StringPtr name, int flags, mode_t mode = 0666) {
   int fd;
   KJ_SYSCALL(fd = open(name.cStr(), flags, mode), name);
   return kj::AutoCloseFd(fd);
-}
-
-kj::Tuple<kj::AutoCloseFd, kj::String> raiiTemp(kj::StringPtr template_) {
-  int fd;
-  auto name = kj::str(template_, "XXXXXX");
-  KJ_SYSCALL(fd = mkstemp(name.begin()), strlen(name.begin()), strlen(name.cStr()), name.cStr(), name, name.size());
-  return kj::tuple(kj::AutoCloseFd(fd), kj::mv(name));
 }
 
 void writeFile(kj::StringPtr filename, kj::StringPtr content) {
@@ -93,13 +70,15 @@ void syncPath(kj::StringPtr pathname) {
 }
 
 void writeFileAtomic(kj::StringPtr filename, kj::StringPtr content) {
-  auto r = raiiTemp("var/tmp/");
+  int fd;
+  auto name = kj::str("/var/tmp/tmp.XXXXXX");
+  KJ_SYSCALL(fd = mkstemp(name.begin()), name);
   {
-    kj::FdOutputStream(kj::mv(kj::get<0>(r)))
+    kj::FdOutputStream(fd)
         .write(reinterpret_cast<const byte*>(content.begin()), content.size());
   }
-  syncPath(kj::get<1>(r));
-  KJ_SYSCALL(rename(kj::mv(kj::get<1>(r)).cStr(), filename.cStr()));
+  syncPath(name);
+  KJ_SYSCALL(rename(name.cStr(), filename.cStr()));
 }
 
 void removeAllFiles(kj::StringPtr dirname) {
@@ -156,11 +135,6 @@ kj::String identityStr(capnp::Data::Reader identity) {
   return ret;
 }
 
-void writeUser(sandstorm::UserInfo::Reader userInfo) {
-  auto idStr = identityStr(userInfo.getIdentityId());
-  writeFileAtomic(kj::str("var/users/", idStr), json.encode(userInfo));
-}
-
 class WebSessionImpl final: public sandstorm::WebSession::Server {
  public:
   WebSessionImpl(sandstorm::UserInfo::Reader userInfo,
@@ -172,7 +146,6 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
       preferredHandle = kj::heapString("anon");
     }
     KJ_LOG(INFO, "new session", preferredHandle);
-    //writeUser(userInfo);
   }
 
   // TODO(soon): GET /chats?new -> enqueue request onto wait queue, dispatch
@@ -304,9 +277,6 @@ class Serve {
       KJ_FAIL_SYSCALL("unlink", errno);
     }
     copyFile("var/chats", "var/chats~");
-
-    json.addTypeHandler(identity_handler);
-    // TODO(soon): identity id handler.
 
     auto stream = ioContext.lowLevelProvider->wrapSocketFd(3);
     capnp::TwoPartyVatNetwork network(*stream, capnp::rpc::twoparty::Side::CLIENT);
