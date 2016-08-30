@@ -1,4 +1,9 @@
 <!doctype html>
+<style type="text/css">
+#topic { font-style: italic }
+#chats { height: 85%; overflow-y: scroll }
+html, body { height: 100% }
+</style>
 <div id="topic" style="font-style: italic"></div>
 <div id="chats"></div>
 <script type="text/javascript">
@@ -40,24 +45,41 @@ function doPut(url, data) {
   return fetch(url, { method: 'put', data: data });
 }
 
-function queryChats() {
-  doGet('/chats').then(function(xhr) {
-    document.querySelector('#chats').innerText = xhr.responseText;
-    window.setTimeout(queryChats, 100);
-  }, function(err) {
+function handleError(cont) {
+  return function(err) {
     console.error(err.stack);
-    window.setTimeout(queryChats, 1000);
-  });
+    window.setTimeout(cont, 3000);
+  };
 }
 
-function queryTopic()  {
-  doGet('/topic').then(function(xhr) {
-    document.querySelector('#topic').innerText = xhr.responseText;
-    window.setTimeout(queryTopic, 1000);
-  }, function(err) {
-    console.error(err.stack);
-    window.setTimeout(queryTopic, 10000);
-  });
+function receiveXhr(cont, sel) {
+  return function(xhr) {
+    console.log("updating ", sel);
+    var el = document.querySelector(sel);
+    const doScroll = el.scrollTop == el.scrollHeight - el.offsetHeight;
+    el.innerText = xhr.responseText;
+    if (doScroll) {
+      el.scrollTop = el.scrollHeight;
+    }
+    cont();
+  };
+}
+
+function init() {
+  doGet('/chats').then(receiveXhr(queryChats, '#chats'),
+                       handleError(queryChats));
+  doGet('/topic').then(receiveXhr(queryTopic, '#topic'),
+                       handleError(queryTopic));
+}
+
+function queryChats() {
+  doGet('/chats?new').then(receiveXhr(queryChats, '#chats'),
+                           handleError(queryChats));
+}
+
+function queryTopic() {
+  doGet('/topic?new').then(receiveXhr(queryTopic, '#topic'),
+                           handleError(queryTopic));
 }
 
 function sendChat() {
@@ -75,8 +97,7 @@ function setTopic() {
   });
   document.querySelector('#topic-new').value = '';
 }
-queryChats();
-queryTopic();
+init();
 </script>
 <form action="#" onsubmit="sendChat(); return false">
 <input type="text" name="chat" id="chat" autofocus>

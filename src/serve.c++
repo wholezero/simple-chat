@@ -61,6 +61,9 @@ kj::String readFile(kj::StringPtr filename) {
 
 void syncPath(kj::StringPtr pathname) {
   int fd;
+  // XX cheez. don't sync / since it's read-only.
+  if (pathname == "")
+    return;
   KJ_SYSCALL(fd = open(pathname.cStr(), O_RDONLY), pathname);
   KJ_SYSCALL(fdatasync(fd));
   KJ_SYSCALL(close(fd));
@@ -135,6 +138,10 @@ kj::String identityStr(capnp::Data::Reader identity) {
   return ret;
 }
 
+// TODO(soon): not global
+kj::Vector<kj::Own<kj::PromiseFulfiller<void>>> chatRequests;
+kj::Vector<kj::Own<kj::PromiseFulfiller<void>>> topicRequests;
+
 class WebSessionImpl final: public sandstorm::WebSession::Server {
  public:
   WebSessionImpl(sandstorm::UserInfo::Reader userInfo,
@@ -148,8 +155,7 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
     KJ_LOG(INFO, "new session", preferredHandle);
   }
 
-  // TODO(soon): GET /chats?new -> enqueue request onto wait queue, dispatch
-  // that queue after anyone posts a chat.
+  // TODO(soon): factor out respondWith
   kj::Promise<void> get(GetContext context) override {
     auto path = context.getParams().getPath();
     requireCanonicalPath(path);
@@ -158,11 +164,26 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
       response.setMimeType("text/html");
       response.setEncoding("gzip");
       response.getBody().setBytes(readFile("index.html.gz").asBytes());
+    } else if (path == "chats?new") {
+      auto ret = kj::newPromiseAndFulfiller<void>();
+      chatRequests.add(kj::mv(ret.fulfiller));
+      return ret.promise.then([context]() mutable {
+        auto response = context.getResults().initContent();
+        response.setMimeType("text/plain");
+        response.getBody().setBytes(readFile("var/chats").asBytes());
+      });
     } else if (path == "chats") {
       auto response = context.getResults().initContent();
       response.setMimeType("text/plain");
       response.getBody().setBytes(readFile("var/chats").asBytes());
-      // TODO(soon): user profiles
+    } else if (path == "topic?new") {
+      auto ret = kj::newPromiseAndFulfiller<void>();
+      topicRequests.add(kj::mv(ret.fulfiller));
+      return ret.promise.then([context]() mutable {
+        auto response = context.getResults().initContent();
+        response.setMimeType("text/plain");
+        response.getBody().setBytes(readFile("var/topic").asBytes());
+      });
     } else if (path == "topic") {
       auto response = context.getResults().initContent();
       response.setMimeType("text/plain");
@@ -192,6 +213,9 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
       response.setIsPermanent(false);
       response.setSwitchToGet(true);
       response.setLocation("/");
+      for (auto& fulfiller: chatRequests) {
+        fulfiller->fulfill();
+      }
     } else {
       auto response = context.getResults().initClientError();
       response.setStatusCode(sandstorm::WebSession::Response::ClientErrorCode::BAD_REQUEST);
@@ -210,6 +234,9 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
       response.setIsPermanent(false);
       response.setSwitchToGet(true);
       response.setLocation("/");
+      for (auto& fulfiller: topicRequests) {
+        fulfiller->fulfill();
+      }
     } else {
       auto response = context.getResults().initClientError();
       response.setStatusCode(sandstorm::WebSession::Response::ClientErrorCode::BAD_REQUEST);
