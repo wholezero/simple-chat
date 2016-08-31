@@ -113,18 +113,12 @@ void copyFile(kj::StringPtr from, kj::StringPtr to) {
 }
 
 void appendDataAtomic(kj::StringPtr filename, kj::StringPtr content) {
-  // Assumes that scratchname exists and is a copy of filename.
-  auto scratchname = kj::str(filename, "~");
-  {
-    kj::FdOutputStream(raiiOpen(scratchname, O_WRONLY | O_APPEND))
-        .write(reinterpret_cast<const byte*>(content.begin()), content.size());
-  }
-  syncPath(scratchname);
-  // XX Ubuntu 16.04.1 doesn't seem to have a definition for renameat2.
-  KJ_SYSCALL(syscall(SYS_renameat2, AT_FDCWD, filename.cStr(), AT_FDCWD,
-                     scratchname.cStr(), RENAME_EXCHANGE));
-  kj::FdOutputStream(raiiOpen(scratchname, O_WRONLY | O_APPEND))
+  // Relies on short writes in Linux being atomic.
+  // magic number: https://stackoverflow.com/a/24270790
+  KJ_REQUIRE(content.size() <= 1008);
+  kj::FdOutputStream(raiiOpen(filename, O_WRONLY | O_APPEND))
       .write(reinterpret_cast<const byte*>(content.begin()), content.size());
+  syncPath(filename);
 }
 
 kj::String identityStr(capnp::Data::Reader identity) {
@@ -288,7 +282,6 @@ class Serve {
 
   kj::MainBuilder::Validity init() {
     KJ_LOG(INFO, "init");
-    KJ_SYSCALL(mkdir("var/users", 0777));
     KJ_SYSCALL(mkdir("var/tmp", 0777));
     writeFileAtomic("var/topic", "Random chatter");
     writeFileAtomic("var/chats", "");
@@ -303,7 +296,6 @@ class Serve {
     if (r == -1 && errno != ENOENT) {
       KJ_FAIL_SYSCALL("unlink", errno);
     }
-    copyFile("var/chats", "var/chats~");
 
     auto stream = ioContext.lowLevelProvider->wrapSocketFd(3);
     capnp::TwoPartyVatNetwork network(*stream, capnp::rpc::twoparty::Side::CLIENT);

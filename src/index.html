@@ -1,10 +1,11 @@
 <!doctype html>
 <style type="text/css">
+body { margin: 0 8px }
 #topic { font-style: italic }
 #chats { height: 85%; overflow-y: scroll }
 html, body { height: 100% }
 </style>
-<div id="topic" style="font-style: italic"></div>
+<div id="topic"></div>
 <div id="chats"></div>
 <script type="text/javascript">
 function fetch(url, options) {
@@ -101,9 +102,9 @@ init();
 </script>
 <form action="#" onsubmit="sendChat(); return false">
 <input type="text" name="chat" id="chat" autofocus>
-<button>&gt;</button>
+<button title="Send chat">&gt;</button>
 </form>
 <form action="#" onsubmit="setTopic(); return false">
 <input type="text" name="topic-new" id="topic-new">
-<button>^</button>
+<button title="Set topic">^</button>
 </form>

@@ -19,9 +19,9 @@ const pkgdef :Spk.PackageDefinition = (
 
     appTitle = (defaultText = "Simple Chat"),
 
-    appVersion = 0,  # Increment this for every release.
+    appVersion = 1,  # Increment this for every release.
 
-    appMarketingVersion = (defaultText = "0.1.0"),
+    appMarketingVersion = (defaultText = "0.1.1"),
     # Human-readable representation of appVersion. Should match the way you
     # identify versions of your app in documentation and marketing.
 
@@ -59,10 +59,10 @@ const pkgdef :Spk.PackageDefinition = (
         #marketBig = (svg = embed "path/to/market-big-300x300.svg"),
       ),
 
-      website = "https://github.com/mrdomino/bazel-sandstorm",
+      website = "https://github.com/mrdomino/sandstorm-bazel",
       # This should be the app's main website url.
 
-      codeUrl = "https://github.com/mrdomino/bazel-sandstorm",
+      codeUrl = "https://github.com/mrdomino/sandstorm-bazel",
       # URL of the app's source code repository, e.g. a GitHub URL.
       # Required if you specify a license requiring redistributing code, but optional otherwise.
 
