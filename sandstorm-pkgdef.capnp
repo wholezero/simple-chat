@@ -114,7 +114,7 @@ const pkgdef :Spk.PackageDefinition = (
       #
       # Where `<key-id>` is a PGP key ID or email address associated with the key.
 
-      #description = (defaultText = embed "path/to/description.md"),
+      description = (defaultText = embed "description.md"),
       # The app's description in Github-flavored Markdown format, to be displayed e.g.
       # in an app store. Note that the Markdown is not permitted to contain HTML nor image tags (but
       # you can include a list of screenshots separately).
@@ -125,6 +125,7 @@ const pkgdef :Spk.PackageDefinition = (
       # title in the grid view in the app market.
 
       screenshots = [
+        (width = 344, height = 527, png = embed "shot.png"),
         # Screenshots to use for marketing purposes.  Examples below.
         # Sizes are given in device-independent pixels, so if you took these
         # screenshots on a Retina-style high DPI screen, divide each dimension by two.
