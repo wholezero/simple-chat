@@ -6,6 +6,7 @@
 // End hack.
 
 #include <algorithm>
+#include <set>
 
 #include <kj/main.h>
 #include <kj/debug.h>
@@ -122,31 +123,41 @@ void appendDataAtomic(kj::StringPtr filename, kj::StringPtr content) {
 }
 
 kj::String identityStr(capnp::Data::Reader identity) {
-  KJ_REQUIRE(identity.size() >= 16, identity.size());
-  auto ret = kj::heapString(32);
-  auto it = ret.begin();
-  for (auto i = 0u; i < 16; ++i) {
-    sprintf(it, "%02hhx", byte(identity[i]));
-    it += 2;
+  kj::Vector<char> ret;
+  char buf[3];
+  for (auto i = 0u; i < identity.size() && i < 16; ++i) {
+    sprintf(buf, "%02hhx", byte(identity[i]));
+    ret.addAll(buf, buf + 2);
   }
-  return ret;
+  return kj::String(ret.releaseAsArray());
 }
 
 // TODO(soon): not global
 kj::Vector<kj::Own<kj::PromiseFulfiller<void>>> chatRequests;
 kj::Vector<kj::Own<kj::PromiseFulfiller<void>>> topicRequests;
+std::set<kj::String> onlineUsers;
+
+void writeChat(kj::String&& line) {
+  appendDataAtomic("var/chats", kj::str(kj::mv(line), "\n"));
+  for (auto& fulfiller: chatRequests) {
+    fulfiller->fulfill();
+  }
+  chatRequests.clear();
+}
 
 class WebSessionImpl final: public sandstorm::WebSession::Server {
  public:
   WebSessionImpl(sandstorm::UserInfo::Reader userInfo,
                  sandstorm::SessionContext::Client context,
-                 sandstorm::WebSession::Params::Reader params) {
-    if (userInfo.hasPreferredHandle()) {
-      preferredHandle = kj::heapString(userInfo.getPreferredHandle());
-    } else {
-      preferredHandle = kj::heapString("anon");
-    }
-    KJ_LOG(INFO, "new session", preferredHandle);
+                 sandstorm::WebSession::Params::Reader params,
+                 capnp::Data::Reader tabId):
+      handle(uniqueHandle(userInfo)) {
+    writeChat(kj::str(handle, " (", uniqueIdentity(userInfo, tabId),
+                      ") has joined"));
+  }
+
+  ~WebSessionImpl() noexcept(false) {
+    writeChat(kj::str(handle, " has left"));
   }
 
   // TODO(soon): factor out respondWith
@@ -201,15 +212,11 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
         if (c != '\n')
           postText.add(c);
       }
-      appendDataAtomic("var/chats",
-                       kj::str(preferredHandle, ": ", postText, "\n"));
+      writeChat(kj::str(handle, ": ", postText));
       auto response = context.getResults().initRedirect();
       response.setIsPermanent(false);
       response.setSwitchToGet(true);
       response.setLocation("/");
-      for (auto& fulfiller: chatRequests) {
-        fulfiller->fulfill();
-      }
     } else {
       auto response = context.getResults().initClientError();
       response.setStatusCode(sandstorm::WebSession::Response::ClientErrorCode::BAD_REQUEST);
@@ -231,6 +238,7 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
       for (auto& fulfiller: topicRequests) {
         fulfiller->fulfill();
       }
+      topicRequests.clear();
     } else {
       auto response = context.getResults().initClientError();
       response.setStatusCode(sandstorm::WebSession::Response::ClientErrorCode::BAD_REQUEST);
@@ -249,8 +257,51 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
     }
   }
 
+  kj::String uniqueHandle(sandstorm::UserInfo::Reader userInfo) {
+    kj::Vector<char> baseHandle;
+    if (userInfo.hasPreferredHandle()) {
+      for (auto c : userInfo.getPreferredHandle()) {
+        if (c != ' ' && c != '\n')
+          baseHandle.add(c);
+      }
+    } else {
+      baseHandle.addAll(kj::StringPtr("anon"));
+    }
+    auto preferredHandle = kj::heapString(baseHandle.releaseAsArray());
+    if (onlineUsers.find(preferredHandle) == onlineUsers.end()) {
+      onlineUsers.emplace(kj::heapString(preferredHandle));
+      return kj::mv(preferredHandle);
+    } else {
+      for (auto i = 1u; i < 8192; ++i) {
+        auto handle = kj::str(preferredHandle, i);
+        if (onlineUsers.find(handle) == onlineUsers.end()) {
+          onlineUsers.emplace(kj::heapString(handle));
+          return kj::mv(handle);
+        }
+      }
+    }
+    KJ_REQUIRE(false, "couldn't find a suitable nick");
+  }
+
+  kj::String uniqueIdentity(sandstorm::UserInfo::Reader userInfo,
+                            capnp::Data::Reader tabId) {
+    kj::Vector<char> ret;
+    if (userInfo.hasDisplayName()) {
+      ret.addAll(userInfo.getDisplayName().getDefaultText());
+      ret.addAll(kj::StringPtr(", "));
+    }
+    if (userInfo.hasIdentityId()) {
+      ret.addAll(kj::StringPtr("user-"));
+      ret.addAll(identityStr(userInfo.getIdentityId()));
+    } else {
+      ret.addAll(kj::StringPtr("tab-"));
+      ret.addAll(identityStr(tabId));
+    }
+    return kj::String(ret.releaseAsArray());
+  }
+
   // TODO(soon): strip spaces and newlines from handle
-  kj::String preferredHandle;
+  kj::String handle;
 };
 
 class UiViewImpl final: public sandstorm::UiView::Server {
@@ -262,7 +313,8 @@ class UiViewImpl final: public sandstorm::UiView::Server {
 
     context.getResults().setSession(
         kj::heap<WebSessionImpl>(params.getUserInfo(), params.getContext(),
-                                 params.getSessionParams().getAs<sandstorm::WebSession::Params>()));
+                                 params.getSessionParams().getAs<sandstorm::WebSession::Params>(),
+                                 params.getTabId()));
 
     return kj::READY_NOW;
   }
@@ -296,6 +348,8 @@ class Serve {
     if (r == -1 && errno != ENOENT) {
       KJ_FAIL_SYSCALL("unlink", errno);
     }
+
+    writeChat(kj::heapString("restarted"));
 
     auto stream = ioContext.lowLevelProvider->wrapSocketFd(3);
     capnp::TwoPartyVatNetwork network(*stream, capnp::rpc::twoparty::Side::CLIENT);
