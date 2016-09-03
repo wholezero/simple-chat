@@ -14,6 +14,9 @@ cc_library(
         "c++/src/kj/**/*.h",
     ]),
     includes = ["c++/src"],
+    defines = [
+        "KJ_USE_FUTEX=0",
+    ],
     copts = [
         "-Wno-sign-compare",
         "-Wno-strict-aliasing",

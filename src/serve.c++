@@ -5,8 +5,9 @@
 #undef _GLIBCXX_HAVE_GETS     // correct broken config
 // End hack.
 
-#include <algorithm>
+#if UNIQUE_HANDLES
 #include <set>
+#endif
 
 #include <kj/main.h>
 #include <kj/debug.h>
@@ -24,7 +25,6 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <errno.h>
-#include <linux/fs.h>
 #include <sys/syscall.h>
 
 #include <sandstorm/grain.capnp.h>
@@ -135,7 +135,9 @@ kj::String identityStr(capnp::Data::Reader identity) {
 // TODO(soon): not global
 kj::Vector<kj::Own<kj::PromiseFulfiller<void>>> chatRequests;
 kj::Vector<kj::Own<kj::PromiseFulfiller<void>>> topicRequests;
+#if UNIQUE_HANDLES
 std::set<kj::String> onlineUsers;
+#endif
 
 void writeChat(kj::String&& line) {
   appendDataAtomic("var/chats", kj::str(kj::mv(line), "\n"));
@@ -152,8 +154,10 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
                  sandstorm::WebSession::Params::Reader params,
                  capnp::Data::Reader tabId):
       handle(uniqueHandle(userInfo)) {
+#if UNIQUE_HANDLES
     writeChat(kj::str(handle, " (", uniqueIdentity(userInfo, tabId),
                       ") has joined"));
+#endif
   }
 
   ~WebSessionImpl() noexcept(false) {
@@ -204,7 +208,6 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
   kj::Promise<void> post(PostContext context) override {
     auto path = context.getParams().getPath();
     requireCanonicalPath(path);
-    KJ_LOG(INFO, "Got post: ", path, ".");
     if (path == "chats") {
       kj::Vector<char> postText;
       auto content = context.getParams().getContent().getContent().asChars();
@@ -228,7 +231,6 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
   kj::Promise<void> put(PutContext context) override {
     auto path = context.getParams().getPath();
     requireCanonicalPath(path);
-    KJ_LOG(INFO, "Got put: ", path, ".");
     if (path == "topic") {
       writeFileAtomic("var/topic", kj::str(context.getParams().getContent().getContent().asChars()));
       auto response = context.getResults().initRedirect();
@@ -267,6 +269,9 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
     } else {
       baseHandle.addAll(kj::StringPtr("anon"));
     }
+#if !UNIQUE_HANDLES
+    return kj::heapString(baseHandle.releaseAsArray());
+#else
     auto preferredHandle = kj::heapString(baseHandle.releaseAsArray());
     if (onlineUsers.find(preferredHandle) == onlineUsers.end()) {
       onlineUsers.emplace(kj::heapString(preferredHandle));
@@ -298,9 +303,9 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
       ret.addAll(identityStr(tabId));
     }
     return kj::String(ret.releaseAsArray());
+#endif  // UNIQUE_HANDLES
   }
 
-  // TODO(soon): strip spaces and newlines from handle
   kj::String handle;
 };
 
@@ -333,7 +338,6 @@ class Serve {
   }
 
   kj::MainBuilder::Validity init() {
-    KJ_LOG(INFO, "init");
     KJ_SYSCALL(mkdir("var/tmp", 0777));
     writeFileAtomic("var/topic", "Random chatter");
     writeFileAtomic("var/chats", "");
@@ -342,14 +346,15 @@ class Serve {
   }
 
   kj::MainBuilder::Validity run() {
-    KJ_LOG(INFO, "run");
     removeAllFiles("var/tmp");
     auto r = unlink("var/chats~");
     if (r == -1 && errno != ENOENT) {
       KJ_FAIL_SYSCALL("unlink", errno);
     }
 
+#if UNIQUE_HANDLES
     writeChat(kj::heapString("restarted"));
+#endif
 
     auto stream = ioContext.lowLevelProvider->wrapSocketFd(3);
     capnp::TwoPartyVatNetwork network(*stream, capnp::rpc::twoparty::Side::CLIENT);

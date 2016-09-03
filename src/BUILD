@@ -8,6 +8,9 @@ cc_binary(
     deps = [
         "//third_party/sandstorm:sandstorm",
     ],
+    defines = [
+        "UNIQUE_HANDLES=0",
+    ],
     visibility = ["//visibility:public"],
     linkopts = [
         "-static",
