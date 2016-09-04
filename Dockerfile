@@ -23,6 +23,7 @@ RUN apk update \
   && cd /bazel \
   && ./compile.sh \
   && ln /bazel/output/bazel /usr/local/bin/bazel \
+  && rm -rf /bazel \
   && addgroup -g 1001 dev \
   && adduser -G dev -u 1001 -D dev \
   && mkdir /src \
