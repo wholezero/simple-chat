@@ -1,14 +1,14 @@
 <!doctype html>
 <style type="text/css">
-body { margin: }
 div, form { position: absolute }
 #topic { left: 1em; right: 0; top: 0; font-style: italic }
 #users { right: 0.5em; top: 2em; width: 10em; bottom: 2.5em }
 #chats { left: 1em; top: 2em; right: 10.5em; bottom: 2.5em; overflow-y: scroll }
 #chat-form { left: 1em; right: 40%; bottom: 0.5em }
 #topic-new-form { right: 1em; left: 60%; bottom: 0.5em; width: 40% }
-#topic-new { width: 80% }
-#chat { width: 80% }
+input { width: 90% }
+button { max-width: 7% }
+#chats, #chat, #users { font-family: Courier, Inconsolata, monospace }
 </style>
 <div id="topic"></div>
 <div id="users"></div>
@@ -114,10 +114,10 @@ function setTopic() {
 init();
 </script>
 <form action="#" onsubmit="sendChat(); return false" id="chat-form">
-<input type="text" name="chat" id="chat" autofocus>
+<input type="text" name="chat" id="chat" autocomplete="off" autofocus>
 <button title="Send chat">&gt;</button>
 </form>
 <form action="#" onsubmit="setTopic(); return false" id="topic-new-form">
-<input type="text" name="topic-new" id="topic-new">
+<input type="text" name="topic-new" id="topic-new" autocomplete="off">
 <button title="Set topic">^</button>
 </form>
