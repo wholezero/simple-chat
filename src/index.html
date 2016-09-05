@@ -1,11 +1,17 @@
 <!doctype html>
 <style type="text/css">
-body { margin: 0 8px }
-#topic { font-style: italic }
-#chats { height: 85%; overflow-y: scroll }
-html, body { height: 100% }
+body { margin: }
+div, form { position: absolute }
+#topic { left: 1em; right: 0; top: 0; font-style: italic }
+#users { right: 0.5em; top: 2em; width: 10em; bottom: 2.5em }
+#chats { left: 1em; top: 2em; right: 10.5em; bottom: 2.5em; overflow-y: scroll }
+#chat-form { left: 1em; right: 40%; bottom: 0.5em }
+#topic-new-form { right: 1em; left: 60%; bottom: 0.5em; width: 40% }
+#topic-new { width: 80% }
+#chat { width: 80% }
 </style>
 <div id="topic"></div>
+<div id="users"></div>
 <div id="chats"></div>
 <script type="text/javascript">
 function fetch(url, options) {
@@ -69,6 +75,8 @@ function receiveXhr(cont, sel) {
 function init() {
   doGet('/chats').then(receiveXhr(queryChats, '#chats'),
                        handleError(queryChats));
+  doGet('/users').then(receiveXhr(queryUsers, '#users'),
+                       handleError(queryUsers));
   doGet('/topic').then(receiveXhr(queryTopic, '#topic'),
                        handleError(queryTopic));
 }
@@ -81,6 +89,11 @@ function queryChats() {
 function queryTopic() {
   doGet('/topic?new').then(receiveXhr(queryTopic, '#topic'),
                            handleError(queryTopic));
+}
+
+function queryUsers() {
+  doGet('/users?new').then(receiveXhr(queryUsers, '#users'),
+                           handleError(queryUsers));
 }
 
 function sendChat() {
@@ -100,11 +113,11 @@ function setTopic() {
 }
 init();
 </script>
-<form action="#" onsubmit="sendChat(); return false">
+<form action="#" onsubmit="sendChat(); return false" id="chat-form">
 <input type="text" name="chat" id="chat" autofocus>
 <button title="Send chat">&gt;</button>
 </form>
-<form action="#" onsubmit="setTopic(); return false">
+<form action="#" onsubmit="setTopic(); return false" id="topic-new-form">
 <input type="text" name="topic-new" id="topic-new">
 <button title="Set topic">^</button>
 </form>

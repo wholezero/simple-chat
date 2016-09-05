@@ -5,9 +5,7 @@
 #undef _GLIBCXX_HAVE_GETS     // correct broken config
 // End hack.
 
-#if UNIQUE_HANDLES
 #include <set>
-#endif
 
 #include <kj/main.h>
 #include <kj/debug.h>
@@ -100,14 +98,15 @@ void removeAllFiles(kj::StringPtr dirname) {
   }
 }
 
-kj::String showAsHex(kj::ArrayPtr<byte> arr) {
+kj::String showAsHex(kj::ArrayPtr<const byte> arr) {
   kj::Vector<char> ret;
   char buf[3];
-  for (auto i = 0u; i < arr.size() && i < 16; ++i) {
-    sprintf(buf, "%02hhx", arr[i]);
+  for (auto c: arr) {
+    sprintf(buf, "%02hhx", c);
     ret.addAll(buf, buf + 2);
   }
-  return kj::String(ret.releaseAsArray());
+  ret.add('\0');
+  return kj::heapString(ret.releaseAsArray());
 }
 
 class WaitQueue {
@@ -208,14 +207,70 @@ class StaticIndex {
   kj::String index;
 };
 
+class UserList {
+ public:
+  kj::String add(sandstorm::UserInfo::Reader userInfo) {
+    KJ_DEFER(usersQueue.ready());
+    kj::Vector<char> baseHandle;
+    if (userInfo.hasPreferredHandle()) {
+      for (auto c : userInfo.getPreferredHandle()) {
+        if (c != ' ' && c != '\n')
+          baseHandle.add(c);
+      }
+    } else {
+      baseHandle.addAll(kj::StringPtr("anon"));
+    }
+#if !UNIQUE_HANDLES
+    auto handle = kj::heapString(baseHandle.releaseAsArray());
+    onlineUsers.emplace(kj::heapString(handle));
+    return kj::mv(handle);
+#else
+    auto startHandle = kj::heapString(baseHandle.releaseAsArray());
+    if (onlineUsers.find(startHandle) == onlineUsers.end()) {
+      onlineUsers.emplace(kj::heapString(startHandle));
+      return kj::mv(startHandle);
+    } else {
+      for (auto i = 1u; i < 8192; ++i) {
+        auto handle = kj::str(startHandle, i);
+        if (onlineUsers.find(handle) == onlineUsers.end()) {
+          onlineUsers.emplace(kj::heapString(handle));
+          return kj::mv(handle);
+        }
+      }
+    }
+    KJ_REQUIRE(false, "couldn't find a suitable nick");
+#endif  // UNIQUE_HANDLES
+  }
+
+  void remove(kj::String&& nick) {
+    onlineUsers.erase(nick);
+    usersQueue.ready();
+  }
+
+  kj::String get() const {
+    kj::Vector<char> ret;
+    for (auto& user: onlineUsers) {
+      ret.addAll(user);
+      ret.add('\n');
+    }
+    return kj::heapString(ret.releaseAsArray());
+  }
+
+  kj::Promise<void> onNew() {
+    return usersQueue.wait();
+  }
+
+ private:
+  std::set<kj::String> onlineUsers;
+  WaitQueue usersQueue;
+};
+
 struct AppState {
  public:
   StaticIndex index;
   ChatStream chats;
   Topic topic;
-#if UNIQUE_HANDLES
-  std::set<kj::String> onlineUsers;
-#endif
+  UserList users;
 };
 
 template <typename Context>
@@ -243,17 +298,16 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
                  sandstorm::WebSession::Params::Reader params,
                  capnp::Data::Reader tabId,
                  AppState* appState):
-      handle(uniqueHandle(userInfo)),
-      appState(appState) {
-#if UNIQUE_HANDLES
+      appState(appState),
+      handle(appState->users.add(userInfo)) {
     appState->chats.write(
         kj::str(handle, " (", uniqueIdentity(userInfo, tabId),
                 ") has joined"));
-#endif
   }
 
   ~WebSessionImpl() noexcept(false) {
     appState->chats.write(kj::str(handle, " has left"));
+    appState->users.remove(kj::mv(handle));
   }
 
   kj::Promise<void> get(GetContext context) override {
@@ -273,6 +327,12 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
       });
     } else if (path == "topic") {
       return respondWith(context, appState->topic.get(), "text/plain");
+    } else if (path == "users?new") {
+      return appState->users.onNew().then([context, this]() mutable {
+        respondWith(context, appState->users.get(), "text/plain");
+      });
+    } else if (path == "users") {
+      return respondWith(context, appState->users.get(), "text/plain");
     } else {
       auto response = context.getResults().initClientError();
       response.setStatusCode(sandstorm::WebSession::Response::ClientErrorCode::BAD_REQUEST);
@@ -331,55 +391,31 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
     }
   }
 
-  kj::String uniqueHandle(sandstorm::UserInfo::Reader userInfo) {
-    kj::Vector<char> baseHandle;
-    if (userInfo.hasPreferredHandle()) {
-      for (auto c : userInfo.getPreferredHandle()) {
-        if (c != ' ' && c != '\n')
-          baseHandle.add(c);
-      }
-    } else {
-      baseHandle.addAll(kj::StringPtr("anon"));
-    }
-#if !UNIQUE_HANDLES
-    return kj::heapString(baseHandle.releaseAsArray());
-#else
-    auto preferredHandle = kj::heapString(baseHandle.releaseAsArray());
-    if (onlineUsers.find(preferredHandle) == onlineUsers.end()) {
-      onlineUsers.emplace(kj::heapString(preferredHandle));
-      return kj::mv(preferredHandle);
-    } else {
-      for (auto i = 1u; i < 8192; ++i) {
-        auto handle = kj::str(preferredHandle, i);
-        if (onlineUsers.find(handle) == onlineUsers.end()) {
-          onlineUsers.emplace(kj::heapString(handle));
-          return kj::mv(handle);
-        }
-      }
-    }
-    KJ_REQUIRE(false, "couldn't find a suitable nick");
-  }
-
   kj::String uniqueIdentity(sandstorm::UserInfo::Reader userInfo,
                             capnp::Data::Reader tabId) {
     kj::Vector<char> ret;
     if (userInfo.hasDisplayName()) {
-      ret.addAll(userInfo.getDisplayName().getDefaultText());
-      ret.addAll(kj::StringPtr(", "));
+      for (auto c: userInfo.getDisplayName().getDefaultText()) {
+        if (c != '\n')
+          ret.add(c);
+      }
+      ret.add(' ');
     }
     if (userInfo.hasIdentityId()) {
       ret.addAll(kj::StringPtr("user-"));
-      ret.addAll(showAsHex(userInfo.getIdentityId().slice(0, 16)));
+      ret.addAll(showAsHex(userInfo.getIdentityId().slice(0, 8)));
+      ret.add(' ');
+      ret.addAll(kj::StringPtr("tab-"));
+      ret.addAll(showAsHex(tabId.slice(0, 4)));
     } else {
       ret.addAll(kj::StringPtr("tab-"));
-      ret.addAll(showAsHex(tabId.slice(0, 16)));
+      ret.addAll(showAsHex(tabId));
     }
     return kj::String(ret.releaseAsArray());
-#endif  // UNIQUE_HANDLES
   }
 
-  kj::String handle;
   AppState* const appState;
+  kj::String handle;
 };
 
 class UiViewImpl final: public sandstorm::UiView::Server {
@@ -440,9 +476,7 @@ class Serve {
 
     auto appState = kj::heap<AppState>();
 
-#if UNIQUE_HANDLES
     appState->chats.write("restarted");
-#endif
 
     auto stream = ioContext.lowLevelProvider->wrapSocketFd(3);
     capnp::TwoPartyVatNetwork network(*stream, capnp::rpc::twoparty::Side::CLIENT);
