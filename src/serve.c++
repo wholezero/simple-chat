@@ -199,6 +199,10 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
     appState->chats.write(
         kj::str(handle, " (", displayIdentity(userInfo, tabId),
                 ") has joined"));
+#else
+    puts(kj::str("app: ", handle, " (", displayIdentity(userInfo, tabId),
+                 ") has joined").cStr());
+    fflush(stdout);
 #endif
   }
 
