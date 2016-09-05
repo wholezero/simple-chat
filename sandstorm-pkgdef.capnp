@@ -19,9 +19,9 @@ const pkgdef :Spk.PackageDefinition = (
 
     appTitle = (defaultText = "Simple Chat"),
 
-    appVersion = 2,  # Increment this for every release.
+    appVersion = 3,  # Increment this for every release.
 
-    appMarketingVersion = (defaultText = "0.1.2"),
+    appMarketingVersion = (defaultText = "0.2.0"),
     # Human-readable representation of appVersion. Should match the way you
     # identify versions of your app in documentation and marketing.
 

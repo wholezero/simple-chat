@@ -35,15 +35,15 @@ typedef unsigned char byte;
 
 namespace {
 
+constexpr auto INDEX_PATH = "index.html.gz";
+constexpr auto CHATS_PATH = "var/chats";
+constexpr auto CHATSIZE_PATH = "var/.chatsize";
+constexpr auto TOPIC_PATH = "var/topic";
+
 kj::AutoCloseFd raiiOpen(kj::StringPtr name, int flags, mode_t mode = 0666) {
   int fd;
   KJ_SYSCALL(fd = open(name.cStr(), flags, mode), name);
   return kj::AutoCloseFd(fd);
-}
-
-void writeFile(kj::StringPtr filename, kj::StringPtr content) {
-  kj::FdOutputStream(raiiOpen(filename, O_WRONLY | O_CREAT | O_EXCL))
-      .write(reinterpret_cast<const byte*>(content.begin()), content.size());
 }
 
 kj::String readFile(kj::StringPtr filename) {
@@ -100,51 +100,140 @@ void removeAllFiles(kj::StringPtr dirname) {
   }
 }
 
-void copyFile(kj::StringPtr from, kj::StringPtr to) {
-  // TODO(cleanup): this
-  char buf[BUFSIZ];
-  kj::FdOutputStream to_file(raiiOpen(to, O_WRONLY | O_CREAT | O_TRUNC));
-  kj::FdInputStream from_file(raiiOpen(from, O_RDONLY));
-  while (true) {
-    auto r = from_file.tryRead(buf, BUFSIZ, BUFSIZ);
-    to_file.write(buf, r);
-    if (r < BUFSIZ)
-      break;
-  }
-}
-
-void appendDataAtomic(kj::StringPtr filename, kj::StringPtr content) {
-  // Relies on short writes in Linux being atomic.
-  // magic number: https://stackoverflow.com/a/24270790
-  KJ_REQUIRE(content.size() <= 1008);
-  kj::FdOutputStream(raiiOpen(filename, O_WRONLY | O_APPEND))
-      .write(reinterpret_cast<const byte*>(content.begin()), content.size());
-  syncPath(filename);
-}
-
-kj::String identityStr(capnp::Data::Reader identity) {
+kj::String showAsHex(kj::ArrayPtr<byte> arr) {
   kj::Vector<char> ret;
   char buf[3];
-  for (auto i = 0u; i < identity.size() && i < 16; ++i) {
-    sprintf(buf, "%02hhx", byte(identity[i]));
+  for (auto i = 0u; i < arr.size() && i < 16; ++i) {
+    sprintf(buf, "%02hhx", arr[i]);
     ret.addAll(buf, buf + 2);
   }
   return kj::String(ret.releaseAsArray());
 }
 
-// TODO(soon): not global
-kj::Vector<kj::Own<kj::PromiseFulfiller<void>>> chatRequests;
-kj::Vector<kj::Own<kj::PromiseFulfiller<void>>> topicRequests;
-#if UNIQUE_HANDLES
-std::set<kj::String> onlineUsers;
-#endif
-
-void writeChat(kj::String&& line) {
-  appendDataAtomic("var/chats", kj::str(kj::mv(line), "\n"));
-  for (auto& fulfiller: chatRequests) {
-    fulfiller->fulfill();
+class WaitQueue {
+ public:
+  kj::Promise<void> wait() {
+    // Returns a promise that resolves when ready() is called.
+    auto ret = kj::newPromiseAndFulfiller<void>();
+    requests.add(kj::mv(ret.fulfiller));
+    return kj::mv(ret.promise);
   }
-  chatRequests.clear();
+
+  void ready() {
+    for (auto& request: requests) {
+      request->fulfill();
+    }
+    requests.clear();
+  }
+
+ private:
+  kj::Vector<kj::Own<kj::PromiseFulfiller<void>>> requests;
+};
+
+class ChatStream {
+ public:
+  ChatStream():
+      offset(readFile(CHATSIZE_PATH).parseAs<uint64_t>()),
+      chatData(prepareStream()),
+      chatStream(raiiOpen(CHATS_PATH, O_WRONLY | O_APPEND)) {}
+
+  kj::StringPtr get() const {
+    return kj::StringPtr(chatData.begin(), chatData.end());
+  }
+
+  kj::Promise<void> onNew() {
+    return chatQueue.wait();
+  }
+
+  void write(kj::StringPtr line) {
+    static const auto nl = "\n";
+    chatData.addAll(line);
+    chatData.add('\n');
+    chatStream.write(reinterpret_cast<const byte*>(line.begin()), line.size());
+    chatStream.write(nl, 1);
+    syncPath(CHATS_PATH);
+    offset += line.size() + 1;
+    writeFileAtomic(CHATSIZE_PATH, kj::str(offset));
+    chatQueue.ready();
+  }
+
+ private:
+  kj::Vector<char> prepareStream() {
+    // Called in a member initializer. Depends on offset. Initializes chatData.
+    // Must be called before chatStream is initialized.
+    KJ_SYSCALL(truncate(CHATS_PATH, offset));
+    kj::Vector<char> ret;
+    ret.addAll(readFile(CHATS_PATH));
+    return kj::mv(ret);
+  }
+
+  uint64_t offset;
+  kj::Vector<char> chatData;
+  kj::FdOutputStream chatStream;
+  WaitQueue chatQueue;
+};
+
+class Topic {
+ public:
+  Topic(): topic(readFile(TOPIC_PATH)) {}
+
+  kj::StringPtr get() const {
+    return topic;
+  }
+
+  kj::Promise<void> onNew() {
+    return topicQueue.wait();
+  }
+
+  void set(kj::StringPtr topic_) {
+    topic = kj::heapString(topic_);
+    writeFileAtomic(TOPIC_PATH, topic);
+    topicQueue.ready();
+  }
+
+ private:
+  kj::String topic;
+  WaitQueue topicQueue;
+};
+
+class StaticIndex {
+ public:
+  StaticIndex(): index(readFile(INDEX_PATH)) {}
+
+  kj::StringPtr get() {
+    return index;
+  }
+
+ private:
+  kj::String index;
+};
+
+struct AppState {
+ public:
+  StaticIndex index;
+  ChatStream chats;
+  Topic topic;
+#if UNIQUE_HANDLES
+  std::set<kj::String> onlineUsers;
+#endif
+};
+
+template <typename Context>
+kj::Promise<void> respondWith(Context ctx, kj::StringPtr body, kj::StringPtr mimeType) {
+  auto response = ctx.getResults().initContent();
+  response.setMimeType(mimeType);
+  response.getBody().setBytes(body.asBytes());
+  return kj::READY_NOW;
+}
+
+template <typename Context>
+kj::Promise<void> respondWith(Context ctx, kj::StringPtr body, kj::StringPtr mimeType,
+                              kj::StringPtr encoding) {
+  auto response = ctx.getResults().initContent();
+  response.setMimeType(mimeType);
+  response.setEncoding(encoding);
+  response.getBody().setBytes(body.asBytes());
+  return kj::READY_NOW;
 }
 
 class WebSessionImpl final: public sandstorm::WebSession::Server {
@@ -152,57 +241,44 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
   WebSessionImpl(sandstorm::UserInfo::Reader userInfo,
                  sandstorm::SessionContext::Client context,
                  sandstorm::WebSession::Params::Reader params,
-                 capnp::Data::Reader tabId):
-      handle(uniqueHandle(userInfo)) {
+                 capnp::Data::Reader tabId,
+                 AppState* appState):
+      handle(uniqueHandle(userInfo)),
+      appState(appState) {
 #if UNIQUE_HANDLES
-    writeChat(kj::str(handle, " (", uniqueIdentity(userInfo, tabId),
-                      ") has joined"));
+    appState->chats.write(
+        kj::str(handle, " (", uniqueIdentity(userInfo, tabId),
+                ") has joined"));
 #endif
   }
 
   ~WebSessionImpl() noexcept(false) {
-    writeChat(kj::str(handle, " has left"));
+    appState->chats.write(kj::str(handle, " has left"));
   }
 
-  // TODO(soon): factor out respondWith
   kj::Promise<void> get(GetContext context) override {
     auto path = context.getParams().getPath();
     requireCanonicalPath(path);
     if (path == "") {
-      auto response = context.getResults().initContent();
-      response.setMimeType("text/html");
-      response.setEncoding("gzip");
-      response.getBody().setBytes(readFile("index.html.gz").asBytes());
+      return respondWith(context, appState->index.get(), "text/html", "gzip");
     } else if (path == "chats?new") {
-      auto ret = kj::newPromiseAndFulfiller<void>();
-      chatRequests.add(kj::mv(ret.fulfiller));
-      return ret.promise.then([context]() mutable {
-        auto response = context.getResults().initContent();
-        response.setMimeType("text/plain");
-        response.getBody().setBytes(readFile("var/chats").asBytes());
+      return appState->chats.onNew().then([context, this]() mutable {
+        respondWith(context, appState->chats.get(), "text/plain");
       });
     } else if (path == "chats") {
-      auto response = context.getResults().initContent();
-      response.setMimeType("text/plain");
-      response.getBody().setBytes(readFile("var/chats").asBytes());
+      return respondWith(context, appState->chats.get(), "text/plain");
     } else if (path == "topic?new") {
-      auto ret = kj::newPromiseAndFulfiller<void>();
-      topicRequests.add(kj::mv(ret.fulfiller));
-      return ret.promise.then([context]() mutable {
-        auto response = context.getResults().initContent();
-        response.setMimeType("text/plain");
-        response.getBody().setBytes(readFile("var/topic").asBytes());
+      return appState->topic.onNew().then([context, this]() mutable {
+        respondWith(context, appState->topic.get(), "text/plain");
       });
     } else if (path == "topic") {
-      auto response = context.getResults().initContent();
-      response.setMimeType("text/plain");
-      response.getBody().setBytes(readFile("var/topic").asBytes());
+      return respondWith(context, appState->topic.get(), "text/plain");
     } else {
       auto response = context.getResults().initClientError();
       response.setStatusCode(sandstorm::WebSession::Response::ClientErrorCode::BAD_REQUEST);
       response.setDescriptionHtml(kj::str("Don't know how to get ", path));
+      return kj::READY_NOW;
     }
-    return kj::READY_NOW;
   }
 
   kj::Promise<void> post(PostContext context) override {
@@ -215,7 +291,7 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
         if (c != '\n')
           postText.add(c);
       }
-      writeChat(kj::str(handle, ": ", postText));
+      appState->chats.write(kj::str(handle, ": ", postText));
       auto response = context.getResults().initRedirect();
       response.setIsPermanent(false);
       response.setSwitchToGet(true);
@@ -232,15 +308,11 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
     auto path = context.getParams().getPath();
     requireCanonicalPath(path);
     if (path == "topic") {
-      writeFileAtomic("var/topic", kj::str(context.getParams().getContent().getContent().asChars()));
+      appState->topic.set(kj::str(context.getParams().getContent().getContent().asChars()));
       auto response = context.getResults().initRedirect();
       response.setIsPermanent(false);
       response.setSwitchToGet(true);
       response.setLocation("/");
-      for (auto& fulfiller: topicRequests) {
-        fulfiller->fulfill();
-      }
-      topicRequests.clear();
     } else {
       auto response = context.getResults().initClientError();
       response.setStatusCode(sandstorm::WebSession::Response::ClientErrorCode::BAD_REQUEST);
@@ -297,20 +369,22 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
     }
     if (userInfo.hasIdentityId()) {
       ret.addAll(kj::StringPtr("user-"));
-      ret.addAll(identityStr(userInfo.getIdentityId()));
+      ret.addAll(showAsHex(userInfo.getIdentityId().slice(0, 16)));
     } else {
       ret.addAll(kj::StringPtr("tab-"));
-      ret.addAll(identityStr(tabId));
+      ret.addAll(showAsHex(tabId.slice(0, 16)));
     }
     return kj::String(ret.releaseAsArray());
 #endif  // UNIQUE_HANDLES
   }
 
   kj::String handle;
+  AppState* const appState;
 };
 
 class UiViewImpl final: public sandstorm::UiView::Server {
  public:
+  UiViewImpl(kj::Own<AppState>&& appState): appState(kj::mv(appState)) {}
   kj::Promise<void> newSession(NewSessionContext context) override {
     auto params = context.getParams();
     KJ_REQUIRE(params.getSessionType() == capnp::typeId<sandstorm::WebSession>(),
@@ -319,10 +393,13 @@ class UiViewImpl final: public sandstorm::UiView::Server {
     context.getResults().setSession(
         kj::heap<WebSessionImpl>(params.getUserInfo(), params.getContext(),
                                  params.getSessionParams().getAs<sandstorm::WebSession::Params>(),
-                                 params.getTabId()));
+                                 params.getTabId(), appState));
 
     return kj::READY_NOW;
   }
+
+ private:
+  kj::Own<AppState> appState;
 };
 
 class Serve {
@@ -339,8 +416,9 @@ class Serve {
 
   kj::MainBuilder::Validity init() {
     KJ_SYSCALL(mkdir("var/tmp", 0777));
-    writeFileAtomic("var/topic", "Random chatter");
-    writeFileAtomic("var/chats", "");
+    writeFileAtomic(TOPIC_PATH, "Random chatter");
+    writeFileAtomic(CHATS_PATH, "");
+    writeFileAtomic(CHATSIZE_PATH, "0");
 
     return true;
   }
@@ -351,14 +429,24 @@ class Serve {
     if (r == -1 && errno != ENOENT) {
       KJ_FAIL_SYSCALL("unlink", errno);
     }
+    if (access(CHATSIZE_PATH, F_OK) == -1) {
+      if (errno != ENOENT) {
+        KJ_FAIL_SYSCALL("access", errno);
+      }
+      struct stat s;
+      KJ_SYSCALL(stat(CHATS_PATH, &s));
+      writeFileAtomic(CHATSIZE_PATH, kj::str(s.st_size));
+    }
+
+    auto appState = kj::heap<AppState>();
 
 #if UNIQUE_HANDLES
-    writeChat(kj::heapString("restarted"));
+    appState->chats.write("restarted");
 #endif
 
     auto stream = ioContext.lowLevelProvider->wrapSocketFd(3);
     capnp::TwoPartyVatNetwork network(*stream, capnp::rpc::twoparty::Side::CLIENT);
-    auto rpcSystem = capnp::makeRpcServer(network, kj::heap<UiViewImpl>());
+    auto rpcSystem = capnp::makeRpcServer(network, kj::heap<UiViewImpl>(kj::mv(appState)));
 
     {
       capnp::MallocMessageBuilder message;
