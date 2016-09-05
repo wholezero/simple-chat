@@ -5,4 +5,3 @@ set -eu
 bazel build :target --compilation_mode=opt
 rm -rf target
 tar xf bazel-bin/target.tar
-spk dev
