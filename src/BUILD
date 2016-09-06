@@ -1,5 +1,7 @@
 load("//third_party/capnproto:capnproto.bzl", "cc_capnp_library")
 
+exports_files(["cpuinfo"])
+
 cc_binary(
     name = "serve",
     srcs = [
