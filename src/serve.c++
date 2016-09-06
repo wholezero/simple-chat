@@ -109,10 +109,9 @@ class UserList {
     KJ_DEFER(usersQueue.ready());
     kj::Vector<char> baseHandle;
     if (userInfo.hasPreferredHandle()) {
-      for (auto c : userInfo.getPreferredHandle()) {
-        if (c != ' ' && c != '\n')
-          baseHandle.add(c);
-      }
+      baseHandle.addAll(u::filteredString(
+              [](char x){ return x != ' ' && x != '\n' && x != ':'; },
+              userInfo.getPreferredHandle()));
     } else {
       baseHandle.addAll(kj::StringPtr("anon"));
     }
@@ -236,13 +235,10 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
     auto path = context.getParams().getPath();
     requireCanonicalPath(path);
     if (path == "chats") {
-      kj::Vector<char> postText;
-      auto content = context.getParams().getContent().getContent().asChars();
-      for (auto c : content) {
-        if (c != '\n')
-          postText.add(c);
-      }
-      appState->chats.write(kj::str(handle, ": ", postText));
+      auto chat = u::filteredString(
+          [](char x){ return x != '\n'; },
+          context.getParams().getContent().getContent().asChars());
+      appState->chats.write(kj::str(handle, ": ", chat));
       return u::respondWithRedirect(context, "/");
     }
     return u::respondWithNotFound(context);
@@ -252,7 +248,11 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
     auto path = context.getParams().getPath();
     requireCanonicalPath(path);
     if (path == "topic") {
-      appState->topic.set(kj::str(context.getParams().getContent().getContent().asChars()));
+      auto topic = u::filteredString(
+          [](char x){ return x != '\n'; },
+          context.getParams().getContent().getContent().asChars());
+      appState->topic.set(topic);
+      appState->chats.write(kj::str(handle, " set the topic to: ", topic));
       return u::respondWithRedirect(context, "/");
     }
     return u::respondWithNotFound(context);
@@ -272,10 +272,9 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
                              capnp::Data::Reader tabId) {
     kj::Vector<char> ret;
     if (userInfo.hasDisplayName()) {
-      for (auto c: userInfo.getDisplayName().getDefaultText()) {
-        if (c != '\n')
-          ret.add(c);
-      }
+      ret.addAll(u::filteredString(
+              [](char x){ return x != '\n'; },
+              userInfo.getDisplayName().getDefaultText()));
       ret.add(' ');
     }
     if (userInfo.hasIdentityId()) {

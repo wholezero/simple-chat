@@ -149,4 +149,15 @@ kj::Promise<void> respondWithNotFound(Context context) {
   return kj::READY_NOW;
 }
 
+template <typename Pred>
+kj::String filteredString(Pred&& pred, kj::ArrayPtr<const char> input) {
+  kj::Vector<char> ret(input.size() + 1);
+  for (auto c: input) {
+    if (pred(c))
+      ret.add(c);
+  }
+  ret.add('\0');
+  return kj::String(ret.releaseAsArray());
+}
+
 }   // namespace u
