@@ -1,3 +1,7 @@
+# v0.3.4
+
+* Other: Store chat stream in a vector so it isn't reallocated with each new chat.
+
 # v0.3.3
 
 * Other: Provide a blank cpuinfo.

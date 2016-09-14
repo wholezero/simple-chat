@@ -33,7 +33,8 @@ class ChatStream {
       chatStream(u::raiiOpen(CHATS_PATH, O_WRONLY | O_APPEND)) {}
 
   kj::StringPtr get() const {
-    return chatData;
+    // Returned StringPtr only valid till next call to write().
+    return kj::StringPtr(chatData.begin(), chatData.end() - 1);
   }
 
   kj::Promise<void> onNew() {
@@ -41,10 +42,14 @@ class ChatStream {
   }
 
   void write(kj::StringPtr line) {
-    static const auto nl = "\n";
-    chatData = kj::str(chatData, line, nl);
+    static const auto nl = kj::heapString("\n");
+    // Remove null terminator.
+    chatData.removeLast();
+    chatData.addAll(line);
+    chatData.addAll(nl);
+    chatData.add('\0');
     chatStream.write(reinterpret_cast<const byte*>(line.begin()), line.size());
-    chatStream.write(nl, 1);
+    chatStream.write(reinterpret_cast<const byte*>(nl.begin()), 1);
     u::syncPath(CHATS_PATH);
     offset += line.size() + 1;
     u::writeFileAtomic(CHATSIZE_PATH, kj::str(offset));
@@ -52,15 +57,18 @@ class ChatStream {
   }
 
  private:
-  kj::String prepareStream() {
+  kj::Vector<char> prepareStream() {
     // Called in a member initializer. Depends on offset. Initializes chatData.
     // Must be called before chatStream is initialized.
     KJ_SYSCALL(truncate(CHATS_PATH, offset));
-    return u::readFile(CHATS_PATH);
+    kj::Vector<char> ret(u::getFileSize(CHATS_PATH) + 1);
+    ret.addAll(u::readFile(CHATS_PATH));
+    ret.add('\0');
+    return ret;
   }
 
   uint64_t offset;
-  kj::String chatData;
+  kj::Vector<char> chatData;
   kj::FdOutputStream chatStream;
   u::WaitQueue chatQueue;
 };

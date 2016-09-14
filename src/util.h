@@ -47,16 +47,16 @@ inline kj::AutoCloseFd raiiOpen(kj::StringPtr name, int flags, mode_t mode = 066
   return kj::AutoCloseFd(fd);
 }
 
-inline uint64_t getFileSize(int fd, kj::StringPtr filename) {
+inline uint64_t getFileSize(kj::StringPtr filename) {
   struct stat stats;
-  KJ_SYSCALL(fstat(fd, &stats), filename);
+  KJ_SYSCALL(stat(filename.cStr(), &stats), filename);
   KJ_REQUIRE(S_ISREG(stats.st_mode), "Not a regular file.", filename);
   return stats.st_size;
 }
 
 inline kj::String readFile(kj::StringPtr filename) {
+  auto size = getFileSize(filename);
   auto fd = raiiOpen(filename, O_RDONLY);
-  auto size = getFileSize(fd, filename);
   auto ret = kj::heapString(size);
   kj::FdInputStream in(kj::mv(fd));
   in.read(ret.begin(), size);
