@@ -42,16 +42,13 @@ class ChatStream {
   }
 
   void write(kj::StringPtr line) {
-    static const auto nl = kj::heapString("\n");
     // Remove null terminator.
     chatData.removeLast();
     chatData.addAll(line);
-    chatData.addAll(nl);
     chatData.add('\0');
     chatStream.write(reinterpret_cast<const byte*>(line.begin()), line.size());
-    chatStream.write(reinterpret_cast<const byte*>(nl.begin()), 1);
     u::syncPath(CHATS_PATH);
-    offset += line.size() + 1;
+    offset += line.size();
     u::writeFileAtomic(CHATSIZE_PATH, kj::str(offset));
     chatQueue.ready();
   }
@@ -205,7 +202,7 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
 #if SHOW_JOINS_PARTS
     appState->chats.write(
         kj::str(handle, " (", displayIdentity(userInfo, tabId),
-                ") has joined"));
+                ") has joined\n"));
 #else
     puts(kj::str("app: ", handle, " (", displayIdentity(userInfo, tabId),
                  ") has joined").cStr());
@@ -215,7 +212,7 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
 
   ~WebSessionImpl() noexcept(false) {
 #if SHOW_JOINS_PARTS
-    appState->chats.write(kj::str(handle, " has left"));
+    appState->chats.write(kj::str(handle, " has left\n"));
 #endif
     appState->users.remove(handle);
   }
@@ -246,7 +243,7 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
       auto chat = u::filteredString(
           [](char x){ return x != '\n'; },
           context.getParams().getContent().getContent().asChars());
-      appState->chats.write(kj::str(handle, ": ", chat));
+      appState->chats.write(kj::str(handle, ": ", chat, "\n"));
       return u::respondWithRedirect(context, "/");
     }
     return u::respondWithNotFound(context);
@@ -260,7 +257,7 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
           [](char x){ return x != '\n'; },
           context.getParams().getContent().getContent().asChars());
       appState->topic.set(topic);
-      appState->chats.write(kj::str(handle, " set the topic to: ", topic));
+      appState->chats.write(kj::str(handle, " set the topic to: ", topic, "\n"));
       return u::respondWithRedirect(context, "/");
     }
     return u::respondWithNotFound(context);
@@ -363,7 +360,7 @@ class Serve {
     auto appState = kj::heap<AppState>();
 
 #if SHOW_JOINS_PARTS
-    appState->chats.write("restarted");
+    appState->chats.write("restarted\n");
 #endif
 
     auto stream = ioContext.lowLevelProvider->wrapSocketFd(3);
