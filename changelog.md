@@ -1,3 +1,7 @@
+# v0.3.5
+
+* Other: don't do a separate write for the newline.
+
 # v0.3.4
 
 * Other: Store chat stream in a vector so it isn't reallocated with each new chat.
