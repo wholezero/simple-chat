@@ -72,45 +72,46 @@ function receiveXhr(cont, sel) {
   };
 }
 
+function query(resource) {
+  return function() {
+    var cont = query(resource);
+    doGet(resource + '?new').then(receiveXhr(cont, '#' + resource),
+                                  handleError(cont));
+  };
+}
+
+function react(resource) {
+  var cont = query(resource);
+  doGet(resource).then(receiveXhr(cont, '#' + resource),
+                       handleError(cont));
+}
+
 function init() {
-  doGet('/chats').then(receiveXhr(queryChats, '#chats'),
-                       handleError(queryChats));
-  doGet('/users').then(receiveXhr(queryUsers, '#users'),
-                       handleError(queryUsers));
-  doGet('/topic').then(receiveXhr(queryTopic, '#topic'),
-                       handleError(queryTopic));
-}
-
-function queryChats() {
-  doGet('/chats?new').then(receiveXhr(queryChats, '#chats'),
-                           handleError(queryChats));
-}
-
-function queryTopic() {
-  doGet('/topic?new').then(receiveXhr(queryTopic, '#topic'),
-                           handleError(queryTopic));
-}
-
-function queryUsers() {
-  doGet('/users?new').then(receiveXhr(queryUsers, '#users'),
-                           handleError(queryUsers));
+  react('chats');
+  react('users');
+  react('topic');
 }
 
 function sendChat() {
-  doPost('/chats', document.querySelector('#chat').value)
-      .catch(function (err) {
-    console.error(err.stack);
-  });
-  document.querySelector('#chat').value = '';
+  var el = document.querySelector('#chat');
+  doPost('/chats', el.value)
+      .then(function() {
+        el.value = '';
+      }, function(err) {
+        console.error(err.stack);
+      });
 }
 
 function setTopic() {
-  doPut('/topic', document.querySelector('#topic-new').value)
-      .catch(function(err) {
-    console.error(err.stack);
-  });
-  document.querySelector('#topic-new').value = '';
+  var el = document.querySelector('#topic-new');
+  doPut('/topic', el.value)
+      .then(function() {
+        el.value = '';
+      }, function(err) {
+        console.error(err.stack);
+      });
 }
+
 init();
 </script>
 <form action="#" onsubmit="sendChat(); return false" id="chat-form">
