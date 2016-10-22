@@ -6,8 +6,8 @@ const pkgdef :Spk.PackageDefinition = (
   id = "yp9xt15y8s0rsuntnhgnr510qpcvm2tatd9mn1gzwr2au8h2n4p0",
   manifest = (
     appTitle = (defaultText = "Simple Chat"),
-    appVersion = 9,  # Increment this for every release.
-    appMarketingVersion = (defaultText = "0.3.5"),
+    appVersion = 10,  # Increment this for every release.
+    appMarketingVersion = (defaultText = "0.4.0"),
 
     actions = [
       ( nounPhrase = (defaultText = "instance"),
