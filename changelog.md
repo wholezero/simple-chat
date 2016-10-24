@@ -1,3 +1,8 @@
+# v0.3.6
+
+* Fix: Don't clear the line until the message is successfully sent.
+* Other: streamline the js a little.
+
 # v0.3.5
 
 * Other: don't do a separate write for the newline.
