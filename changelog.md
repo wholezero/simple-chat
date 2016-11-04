@@ -1,11 +1,17 @@
-# v0.3.6
+# v0.5.0
+
+* New: Off-the-record mode.
+* Fix: Don't write joins or parts to logs anymore.
+* Other: Refer to grains as rooms instead of instances.
+
+# v0.4.0
 
 * Fix: Don't clear the line until the message is successfully sent.
-* Other: streamline the js a little.
+* Other: Streamline the js a little.
 
 # v0.3.5
 
-* Other: don't do a separate write for the newline.
+* Other: Don't do a separate write for the newline.
 
 # v0.3.4
 

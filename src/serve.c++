@@ -14,6 +14,7 @@
 #include <kj/main.h>
 #include <kj/string.h>
 #include <kj/vector.h>
+#include <unistd.h>
 
 #include "util.h"
 
@@ -27,10 +28,11 @@ constexpr auto TOPIC_PATH = "var/topic";
 
 class ChatStream {
  public:
-  ChatStream():
-      offset(u::readFile(CHATSIZE_PATH).parseAs<uint64_t>()),
-      chatData(prepareStream()),
-      chatStream(u::raiiOpen(CHATS_PATH, O_WRONLY | O_APPEND)) {}
+  ChatStream() {
+    chatData.add('\0');
+  }
+  ChatStream(kj::Vector<char>&& data):
+      chatData(kj::mv(data)) {}
 
   kj::StringPtr get() const {
     // Returned StringPtr only valid till next call to write().
@@ -46,17 +48,33 @@ class ChatStream {
     chatData.removeLast();
     chatData.addAll(line);
     chatData.add('\0');
-    chatStream.write(reinterpret_cast<const byte*>(line.begin()), line.size());
-    u::syncPath(CHATS_PATH);
-    offset += line.size();
-    u::writeFileAtomic(CHATSIZE_PATH, kj::str(offset));
     chatQueue.ready();
   }
 
  private:
-  kj::Vector<char> prepareStream() {
-    // Called in a member initializer. Depends on offset. Initializes chatData.
-    // Must be called before chatStream is initialized.
+  kj::Vector<char> chatData;
+  u::WaitQueue chatQueue;
+};
+
+class DiskStream: public ChatStream {
+ public:
+  DiskStream():
+      ChatStream(dataFromDisk()),
+      chats(u::raiiOpen(CHATS_PATH, O_WRONLY | O_APPEND)) {}
+
+  void write(kj::StringPtr line) {
+    chats.write(reinterpret_cast<const byte*>(line.begin()), line.size());
+    u::syncPath(CHATS_PATH);
+    offset += line.size();
+    u::writeFileAtomic(CHATSIZE_PATH, kj::str(offset));
+    ChatStream::write(line);
+  }
+
+ private:
+  kj::Vector<char> dataFromDisk() {
+    // Called in a member initializer. Initializes offset out-of-line.
+    // Must be called before chats is initialized.
+    offset = u::readFile(CHATSIZE_PATH).parseAs<uint64_t>();
     KJ_SYSCALL(truncate(CHATS_PATH, offset));
     kj::Vector<char> ret(u::getFileSize(CHATS_PATH) + 1);
     ret.addAll(u::readFile(CHATS_PATH));
@@ -65,15 +83,14 @@ class ChatStream {
   }
 
   uint64_t offset;
-  kj::Vector<char> chatData;
-  kj::FdOutputStream chatStream;
-  u::WaitQueue chatQueue;
+  kj::FdOutputStream chats;
 };
 
 
 class Topic {
  public:
-  Topic(): topic(u::readFile(TOPIC_PATH)) {}
+  Topic(): topic(kj::heapString("Random chatter")) {}
+  Topic(kj::String&& topic): topic(kj::mv(topic)) {}
 
   kj::StringPtr get() const {
     return topic;
@@ -85,13 +102,21 @@ class Topic {
 
   void set(kj::StringPtr topic_) {
     topic = kj::heapString(topic_);
-    u::writeFileAtomic(TOPIC_PATH, topic);
     topicQueue.ready();
   }
 
  private:
   kj::String topic;
   u::WaitQueue topicQueue;
+};
+
+class DiskTopic: public Topic {
+ public:
+  DiskTopic(): Topic(u::readFile(TOPIC_PATH)) {}
+  void set(kj::StringPtr topic_) {
+    u::writeFileAtomic(TOPIC_PATH, topic_);
+    Topic::set(topic_);
+  }
 };
 
 
@@ -168,13 +193,17 @@ class UserList {
 };
 
 
+template <typename ChatStreamT, typename TopicT>
 struct AppState {
  public:
   const StaticIndex index;
-  ChatStream chats;
-  Topic topic;
+  ChatStreamT chats;
+  TopicT topic;
   UserList users;
 };
+
+using MemState = AppState<ChatStream, Topic>;
+using DiskState = AppState<DiskStream, DiskTopic>;
 
 
 template <typename Context, typename T>
@@ -190,6 +219,7 @@ kj::Promise<void> respondWithObject(Context context, T& object, bool awaitNew) {
 }
 
 
+template <typename AppState>
 class WebSessionImpl final: public sandstorm::WebSession::Server {
  public:
   WebSessionImpl(sandstorm::UserInfo::Reader userInfo,
@@ -203,10 +233,6 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
     appState->chats.write(
         kj::str(handle, " (", displayIdentity(userInfo, tabId),
                 ") has joined\n"));
-#else
-    puts(kj::str("app: ", handle, " (", displayIdentity(userInfo, tabId),
-                 ") has joined").cStr());
-    fflush(stdout);
 #endif
   }
 
@@ -300,6 +326,7 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
 };
 
 
+template <typename AppState>
 class UiViewImpl final: public sandstorm::UiView::Server {
  public:
   UiViewImpl(kj::Own<AppState>&& appState): appState(kj::mv(appState)) {}
@@ -309,9 +336,10 @@ class UiViewImpl final: public sandstorm::UiView::Server {
                "Unsupported session type.");
 
     context.getResults().setSession(
-        kj::heap<WebSessionImpl>(params.getUserInfo(), params.getContext(),
-                                 params.getSessionParams().getAs<sandstorm::WebSession::Params>(),
-                                 params.getTabId(), appState));
+        kj::heap<WebSessionImpl<AppState>>(
+            params.getUserInfo(), params.getContext(),
+            params.getSessionParams().getAs<sandstorm::WebSession::Params>(),
+            params.getTabId(), appState));
 
     return kj::READY_NOW;
   }
@@ -326,6 +354,9 @@ class Serve {
   Serve(kj::ProcessContext& context): context(context), ioContext(kj::setupAsyncIo()) {}
 
   kj::MainFunc getMain() {
+    // TODO(someday): use public API or set log level in a better place.
+    kj::_::Debug::setLogLevel(kj::LogSeverity::INFO);
+
     return kj::MainBuilder(context, "app server",
                            "Intended to be run as the root process of a Sandstorm app.")
         .addOption({'i'}, KJ_BIND_METHOD(*this, init), "Initialize a new grain.")
@@ -342,39 +373,60 @@ class Serve {
     return true;
   }
 
+  // XXX this was a little weird to write. I initially wanted to make a
+  // runWithState take a template AppState, but then I got weird compile errors
+  // on the castAs call.
   kj::MainBuilder::Validity run() {
-    u::removeAllFiles("var/tmp");
-    auto r = unlink("var/chats~");
-    if (r == -1 && errno != ENOENT) {
-      KJ_FAIL_SYSCALL("unlink", errno);
-    }
-    if (access(CHATSIZE_PATH, F_OK) == -1) {
+    auto stream = ioContext.lowLevelProvider->wrapSocketFd(3);
+    capnp::TwoPartyVatNetwork network(*stream, capnp::rpc::twoparty::Side::CLIENT);
+
+    bool otr = false;
+    if (access(CHATS_PATH, F_OK) == -1) {
       if (errno != ENOENT) {
         KJ_FAIL_SYSCALL("access", errno);
       }
-      struct stat s;
-      KJ_SYSCALL(stat(CHATS_PATH, &s));
-      u::writeFileAtomic(CHATSIZE_PATH, kj::str(s.st_size));
+      otr = true;
     }
+    KJ_LOG(INFO, "run", otr);
 
-    auto appState = kj::heap<AppState>();
+    if (otr) {
+      runWithRpcSystem(
+          capnp::makeRpcServer(network, kj::heap<UiViewImpl<MemState>>(kj::heap<MemState>())));
+    } else {
+      u::removeAllFiles("var/tmp");
+
+      // TODO(someday): did any released versions of this use chats~ and not
+      // .chatsize? Are literally any of those grains still in the wild?
+      auto r = unlink("var/chats~");
+      if (r == -1 && errno != ENOENT) {
+        KJ_FAIL_SYSCALL("unlink", errno);
+      }
+      if (access(CHATSIZE_PATH, F_OK) == -1) {
+        if (errno != ENOENT) {
+          KJ_FAIL_SYSCALL("access", errno);
+        }
+        struct stat s;
+        KJ_SYSCALL(stat(CHATS_PATH, &s));
+        u::writeFileAtomic(CHATSIZE_PATH, kj::str(s.st_size));
+      }
+
+      auto appState = kj::heap<DiskState>();
 
 #if SHOW_JOINS_PARTS
-    appState->chats.write("restarted\n");
+      appState->chats.write("restarted\n");
 #endif
 
-    auto stream = ioContext.lowLevelProvider->wrapSocketFd(3);
-    capnp::TwoPartyVatNetwork network(*stream, capnp::rpc::twoparty::Side::CLIENT);
-    auto rpcSystem = capnp::makeRpcServer(network, kj::heap<UiViewImpl>(kj::mv(appState)));
-
-    {
-      capnp::MallocMessageBuilder message;
-      auto vatId = message.getRoot<capnp::rpc::twoparty::VatId>();
-      vatId.setSide(capnp::rpc::twoparty::Side::SERVER);
-      sandstorm::SandstormApi<>::Client api =
-          rpcSystem.bootstrap(vatId).castAs<sandstorm::SandstormApi<>>();
+      runWithRpcSystem(
+          capnp::makeRpcServer(network, kj::heap<UiViewImpl<DiskState>>(kj::mv(appState))));
     }
+  }
 
+  [[noreturn]] void runWithRpcSystem(capnp::RpcSystem<capnp::rpc::twoparty::VatId>&& rpcSystem) {
+    capnp::MallocMessageBuilder message;
+    auto vatId = message.getRoot<capnp::rpc::twoparty::VatId>();
+    vatId.setSide(capnp::rpc::twoparty::Side::SERVER);
+    sandstorm::SandstormApi<>::Client api =
+        rpcSystem.bootstrap(vatId).castAs<sandstorm::SandstormApi<>>();
     kj::NEVER_DONE.wait(ioContext.waitScope);
   }
 
