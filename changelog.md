@@ -1,3 +1,11 @@
+# v0.6.0
+
+* New: Reset history in OTR chats.
+* New: UI tweaked; now there's only one text box and that box is refocused
+  whenever you send a chat.
+* Other: Remove requireCanonicalPath, which isn't needed since we're doing
+  simple string comparison on paths in all cases.
+
 # v0.5.0
 
 * New: Off-the-record mode.

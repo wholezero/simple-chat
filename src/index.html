@@ -4,11 +4,9 @@ div, form { position: absolute }
 #topic { left: 1em; right: 0; top: 0; font-style: italic }
 #users { right: 0.5em; top: 2em; width: 10em; bottom: 2.5em }
 #chats { left: 1em; top: 2em; right: 10.5em; bottom: 2.5em; overflow-y: scroll }
-#chat-form { left: 1em; right: 40%; bottom: 0.5em }
-#topic-new-form { right: 1em; left: 60%; bottom: 0.5em; width: 40% }
-input { width: 90% }
-button { max-width: 7% }
-#chats, #chat, #users { font-family: Courier, Inconsolata, monospace }
+form { left: 1em; right: 1em; bottom: 0.5em }
+#text { width: 80% }
+#chats, #text, #users { font-family: Courier, Inconsolata, monospace }
 </style>
 <div id="topic"></div>
 <div id="users"></div>
@@ -90,23 +88,40 @@ function init() {
   react('chats');
   react('users');
   react('topic');
+  doGet('/otr').then(function(xhr) {
+    if (JSON.parse(xhr.responseText)['otr']) {
+      document.querySelector('#reset').style.display = 'inline-block';
+    }
+  }, function(err) {
+    console.error(err.stack);
+  });
+}
+
+function resetChats() {
+  doPost('/reset').then(function() {
+    document.querySelector('#text').focus();
+  }, function(err) {
+    console.error(err.stack);
+  });
 }
 
 function sendChat() {
-  var el = document.querySelector('#chat');
+  var el = document.querySelector('#text');
   doPost('/chats', el.value)
       .then(function() {
         el.value = '';
+        el.focus();
       }, function(err) {
         console.error(err.stack);
       });
 }
 
 function setTopic() {
-  var el = document.querySelector('#topic-new');
+  var el = document.querySelector('#text');
   doPut('/topic', el.value)
       .then(function() {
         el.value = '';
+        el.focus();
       }, function(err) {
         console.error(err.stack);
       });
@@ -114,11 +129,12 @@ function setTopic() {
 
 init();
 </script>
-<form action="#" onsubmit="sendChat(); return false" id="chat-form">
-<input type="text" name="chat" id="chat" autocomplete="off" autofocus>
-<button title="Send chat">&gt;</button>
-</form>
-<form action="#" onsubmit="setTopic(); return false" id="topic-new-form">
-<input type="text" name="topic-new" id="topic-new" autocomplete="off">
-<button title="Set topic">^</button>
+<form action="#">
+<button onclick="sendChat(); return false" style="display: none">
+  You never would've guessed, but apparently when you hit enter in a text box, it's the same as clicking on the first button in your form. Which is this button! Which sends the chat.
+</button>
+<button tabindex="2" title="Reset chats" onclick="resetChats(); return false" id="reset" style="display: none">x</button>
+<input tabindex="1" type="text" name="text" id="text" autocomplete="off" autofocus>
+<button tabindex="1" title="Send chat" onclick="sendChat(); return false" id="send-chat">&gt;</button>
+<button tabindex="1" title="Set topic" onclick="setTopic(); return false" id="set-topic">^</button>
 </form>

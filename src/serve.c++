@@ -51,9 +51,20 @@ class ChatStream {
     chatQueue.ready();
   }
 
- private:
+ protected:
   kj::Vector<char> chatData;
+
+ private:
   u::WaitQueue chatQueue;
+};
+
+class MemStream: public ChatStream {
+ public:
+  void reset() {
+    chatData.clear();
+    chatData.add('\0');
+    write("");
+  }
 };
 
 class DiskStream: public ChatStream {
@@ -202,7 +213,7 @@ struct AppState {
   UserList users;
 };
 
-using MemState = AppState<ChatStream, Topic>;
+using MemState = AppState<MemStream, Topic>;
 using DiskState = AppState<DiskStream, DiskTopic>;
 
 
@@ -217,6 +228,42 @@ kj::Promise<void> respondWithObject(Context context, T& object, bool awaitNew) {
     return res();
   }
 }
+
+template <typename GetContext, typename PostContext, typename AppState>
+class AppRoute {
+ public:
+  kj::Promise<void> get(kj::String const& path, GetContext context,
+                        AppState* appState) {
+    if (path == "otr")
+      return u::respondWith(context, "{\"otr\": false}", "application/json");
+    return u::respondWithNotFound(context);
+  }
+
+  kj::Promise<void> post(kj::String const& path, PostContext context,
+                         AppState* appState) {
+    return u::respondWithNotFound(context);
+  }
+};
+
+template <typename GetContext, typename PostContext>
+class AppRoute<GetContext, PostContext, MemState> {
+ public:
+  kj::Promise<void> get(kj::String const& path, GetContext context,
+                        MemState* appState) {
+    if (path == "otr")
+      return u::respondWith(context, "{\"otr\": true}", "application/json");
+    return u::respondWithNotFound(context);
+  }
+
+  kj::Promise<void> post(kj::String const& path, PostContext context,
+                         MemState* appState) {
+    if (path == "reset") {
+      appState->chats.reset();
+      return u::respondWithRedirect(context, "/");
+    }
+    return u::respondWithNotFound(context);
+  }
+};
 
 
 template <typename AppState>
@@ -246,7 +293,6 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
   kj::Promise<void> get(GetContext context) override {
     kj::String path = kj::heapString(context.getParams().getPath());
     auto awaitNew = false;
-    requireCanonicalPath(path);
     KJ_IF_MAYBE(qPos, path.findFirst('?')) {
       awaitNew = path.slice(*qPos + 1) == "new";
       path = kj::heapString(path.slice(0, *qPos));
@@ -259,12 +305,11 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
       return respondWithObject(context, appState->users, awaitNew);
     if (path == "topic")
       return respondWithObject(context, appState->topic, awaitNew);
-    return u::respondWithNotFound(context);
+    return appRoute.get(path, context, appState);
   }
 
   kj::Promise<void> post(PostContext context) override {
     auto path = context.getParams().getPath();
-    requireCanonicalPath(path);
     if (path == "chats") {
       auto chat = u::filteredString(
           [](char x){ return x != '\n'; },
@@ -272,7 +317,7 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
       appState->chats.write(kj::str(handle, ": ", chat, "\n"));
       return u::respondWithRedirect(context, "/");
     }
-    return u::respondWithNotFound(context);
+    return appRoute.post(kj::heapString(path), context, appState);
   }
 
   kj::Promise<void> put(PutContext context) override {
@@ -322,6 +367,7 @@ class WebSessionImpl final: public sandstorm::WebSession::Server {
   }
 
   AppState* const appState;
+  AppRoute<GetContext, PostContext, AppState> appRoute;
   const kj::String handle;
 };
 
