@@ -1,33 +1,18 @@
-FROM alpine:3.4
+FROM alpine:3.8
 
-ENV JAVA_HOME /usr/lib/jvm/java-1.8-openjdk
+ADD https://raw.githubusercontent.com/davido/bazel-alpine-package/master/david@ostrovsky.org-5a0369d6.rsa.pub \
+    /etc/apk/keys/david@ostrovsky.org-5a0369d6.rsa.pub
+ADD https://github.com/davido/bazel-alpine-package/releases/download/0.15.2/bazel-0.15.2-r0.apk \
+    /tmp/bazel-0.15.2-r0.apk
 
 RUN apk update \
   && apk --update --upgrade add \
       bash \
-      ca-certificates \
-      curl \
+      /tmp/bazel-0.15.2-r0.apk \
       g++ \
       git \
-      linux-headers \
       musl \
-      openjdk8 \
-      pkgconfig \
-      python \
-      unzip \
-      zip \
-      zlib-dev \
-  && curl -o /etc/apk/keys/sgerrand.rsa.pub https://raw.githubusercontent.com/sgerrand/alpine-pkg-glibc/master/sgerrand.rsa.pub \
-  && curl -LO https://github.com/sgerrand/alpine-pkg-glibc/releases/download/2.23-r3/glibc-2.23-r3.apk \
-  && apk add glibc-2.23-r3.apk
-
-#ENV BAZEL_VERSION 0.3.2
-
-RUN git clone https://github.com/mrdomino/bazel /bazel \
-  && cd /bazel \
-  && ./compile.sh \
-  && ln /bazel/output/bazel /usr/local/bin/bazel \
-  && rm -rf /bazel
+      python
 
 RUN export uid=1000 gid=1000 \
   && echo $uid $gid \
@@ -35,6 +20,8 @@ RUN export uid=1000 gid=1000 \
   && adduser -G dev -u ${uid} -D dev \
   && mkdir /src \
   && chown dev:dev /src
+
+ENV JAVA_HOME /usr/lib/jvm/java-1.8-openjdk
 
 USER dev
 WORKDIR /src

@@ -1,6 +1,6 @@
 def _impl(ctx):
-  includes = set(ctx.attr.includes + [ctx.attr.capnp_system_include])
-  inputs = set(ctx.files.srcs + ctx.files.data)
+  includes = ctx.attr.includes + [ctx.attr.capnp_system_include]
+  inputs = ctx.files.srcs + ctx.files.data
   for dep_target in ctx.attr.deps:
     includes += dep_target.capnp.includes
     inputs += dep_target.capnp.inputs
@@ -30,9 +30,9 @@ _capnp_gen = rule(
         "deps": attr.label_list(providers = ["capnp"]),
         "data": attr.label_list(allow_files=True),
         "includes": attr.string_list(),
-        "capnp": attr.label(executable=True, single_file=True, mandatory=True,
+        "capnp": attr.label(executable=True, cfg="host", single_file=True, mandatory=True,
                             default=Label("//third_party/capnproto:capnp")),
-        "capnpc_cxx": attr.label(executable=True, single_file=True,
+        "capnpc_cxx": attr.label(executable=True, cfg="host", single_file=True,
                                  mandatory=True,
                                  default=Label("//third_party/capnproto:capnpc-c++")),
         "capnp_capnp": attr.label(default=Label("//third_party/capnproto:capnp-capnp")),
