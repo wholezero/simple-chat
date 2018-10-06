@@ -1,3 +1,7 @@
+# v0.6.1
+
+* Other: Fix the build; use more recent bazel.
+
 # v0.6.0
 
 * New: Reset history in OTR chats.
